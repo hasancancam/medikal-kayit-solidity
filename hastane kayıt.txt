@@ -1,0 +1,311 @@
+pragma solidity >=0.7.0 <0.9.0;
+
+/// @title PatientRecords
+/// @author Nicolas Frega - <frega.nicolas@gmail.com>
+/// Allows Medical Record System to maintain records of patients in their network.
+/// Records can be accessed by Hospitals if and only if patient provides name.
+/// Patients are rewarded with erc20 tokens for providing their name
+
+import "./HastaKayıtlarıArayüz.sol";
+
+
+contract HastaKayıtları is HastaKayıtlarıArayüz {
+
+    /*
+    * Events
+    */
+    event Deposit(address indexed sender, uint256 value);
+    event HastaneEkleme(address hastane);
+    event HastaneSilme(address hastane);
+    event HastaEkleme(address hasta);
+    event HastaSilme(address hasta);
+    event HastaKayıdıEklendi(uint256 kayıtID, address hastaAddress);
+    event KayıtlaraEklenenİsim(uint256 kayıtID, address hastaAddress);
+
+    /*
+    * Constans
+    */
+    uint constant public MAKSİMUM_SAYI = 250;
+
+    /*
+    * Storage
+    */
+    mapping (address => bool) public isHasta;
+     mapping (address => bool) public isHastane;
+      mapping (uint256 => mapping (address => Kayıtlar)) kayıtlar;
+      mapping (uint256 => tarihAralıkları) tarihAralıkları;
+     mapping (address => mapping (string => uint256)) mappingByİsim;
+    uint256 public kayıtSayısı = 0;
+
+    struct Kayıtlar {
+        bool sağlananİsim;
+        string  isim;
+        address hasta;
+        address hastane;
+        uint256 kabulTarihi;
+        uint256 taburcuTarihi;
+        uint256 ziyaretNedeni;
+    }
+
+    struct TarihAralığı {
+        uint256 kabulTarihi;
+        uint256 tarihAralıkları;
+    }
+
+    /*
+    * Modifiers
+    */
+    modifier geçerliParametreler(uint saymak) {
+        require(saymak <= MAKSİMUM_SAYI && saymak != 0);
+        _;
+    }
+
+    modifier hastaneYok(address hastane) {
+        require(!isHastane[hastane]);
+        _;
+    }
+
+    modifier hastaneVar(address hastane) {
+        require(isHastane[hastane]);
+        _;
+    }
+
+    modifier hastaYok(address hasta) {
+        require(!isHasta[hasta]);
+        _;
+    }
+
+    modifier hataVar(address hasta) {
+        require(isHasta[hasta]);
+        _;
+    }
+
+    modifier geçerli(address _address) {
+        require(_address != 0);
+        _;
+    }
+
+    modifier boşDeğil(string isim) {
+        bytes memory tempString = bytes(isim);
+        require(tempString.length != 0);
+        _;
+    }
+
+    modifier sadeceHasta(uint256 kayıtId) {
+        require(kayıtlar[kayıtId][msg.gönderen].hasta == msg.gönderen);
+        _;
+    }
+
+    modifier sadeceHastane(uint256 kayıtId, address _hastaAddress) {
+        require(kayıtlar[kayıtId][_hastaAddress].hastane == msg.gönderen);
+        _;
+    }
+
+    modifier kayıtVar(uint256 kayıtId, address hastaAddress) {
+        address _hastane = kayıtlar[kayıtId][hastaAddress].hastane;
+        require(_hastane!= 0x0);
+        _;
+    }
+
+    modifier hastaİsmiGeçerli(uint256 kayıtId, address hasta) {
+        require(kayıtlar[kayıtId][hasta].geçerliİsim == true);
+        _;
+    }
+
+    modifier hastaİsmiGeçersiz(uint256 kayıtId, address hasta) {
+        require(kayıtlar[kayıtId][hasta].geçerliİsim == false);
+        _;
+    }
+
+    modifier sıfırdanYüksek(uint256 _uint) {
+        require(_uint > 0);
+        _;
+    }
+
+    /*
+     * Public functions
+     */
+    /// @dev Contract constructor sets initial hospitals and patients.
+    /// @param _hospitals Address array of initial hospitals.
+    /// @param _patients Address array of initial patients
+    constructor(address[] _hastaneler, address[] _hastalar)
+        public
+        geçerliParametreler(_hastaneler.length)
+        geçerliParametreler(_hastalar.length)
+    {
+        uint i;
+        for (i = 0; i < _hastaneler.length; i++) {
+            require(_hastaneler[i] != 0x0);
+            isHastane[_hastaneler[i]] = true;
+        }
+
+        for (i = 0; i < _hastalar.length; i++) {
+            require(!isHastane[_hastalar[i]]);
+            require(_hastalar[i] != 0x0);
+            isHasta[_hastalar[i]] = true;
+        }
+
+       
+    }
+
+    /// @dev Allows to add a new hospital in the network.
+    /// @param _hospital Address of new hospital.
+    function hastaneEkleme(address _hastane)
+        public
+        onlyOwner
+        hastaneYok(_hastane)
+        hastaYok(_hastane)
+        boşDeğil(_hastane)
+    {
+        isHastane[_hastane] = true;
+        emit HastaneEkleme(_hastane);
+    }
+
+    /// @dev Allows to remove a hospital in the network.
+    /// @param _hospital Address of hospital to remove.
+    function HastaneSilme(address _hastane)
+        public
+        onlyOwner
+        hastaneVar(_hastane)
+    {
+        isHastane[_hastane] = false;
+        emit HastaneSilme(_hastane);
+    }
+
+    /// @dev Allows to add a new patient in the network.
+    /// @param _patient Address of new patient.
+    function HastaEkleme(address _hasta)
+        public
+        onlyOwner
+        hastaYok(_ hasta)
+        hastaneYok(_hasta)
+        boşDeğil(_hasta)
+    {
+        isHastane[_hasta] = true;
+        emit hastaEkleme(_hasta);
+    }
+
+    /// @dev Allows to remove a patient in the network.
+    /// @param _patient Address of patient to remove.
+    function HastaSilme(address _hasta)
+        public
+        onlyOwner
+        hastaVar(_hasta)
+    {
+        isHasta[_hasta] = false;
+        emit HastaSilme(_hasta);
+    }
+
+    /// @dev Allows to add a patient record in the network.
+    /// @param _patientAddress address of the patient for record.
+    /// @param _hospital address of the hospital for record.
+    /// @param _admissionDate date of admission, simple uint.
+    /// @param _dischargeDate date of discharge, simple uint.
+    /// @param _visitReason internal code for reason for visit.
+    function kayıtEkleme (
+        address _hastaAddress,
+        address _hastane,
+        uint256 _kabulTarihi,
+        uint256 _taburcuTarihi,
+        uint256 _ziyaretNedeni)
+        public
+        onlyOwner
+        hastaVar(_hastaAddress)
+        hastaneVar(_hastane)
+    {
+       
+        kayıtlar[kayıtSayısı][_hastaAddress].eklenenİsim = false;
+        kayıtlar[kayıtSayısı][_hastaAddress].hasta = _hastalar;
+        kayıtlar[kayıtSayısı][_hastaAddress].hastane = _hastane;
+        kayıtlar[kayıtSayısı][_hastaAddress].kabulTarihi = _kabulTarihi;
+        kayıtlar[kayıtSayısı][_hastaAddress].taburcuTarihi = _taburcuTarihi
+        kayıtlar[kayıtSayısı][_hastaAddress].ziyaretNedeni = _ziyaretNedeni
+
+        tarihAralıkları[kayıtSayısı].kabulTarihi = _kabulTarihi;
+        tarihAralıkları[kayıtSayısı].taburcuTarihi = _taburcuTarihi;
+
+        emit HastaKayıdıEklendi(kayıtSayısı, _hastaAddress);
+
+        kayıtSayısı += 1;
+    }
+
+    /// @dev Allows a patient to add their name to the record in the network.
+    /// @param _recordID ID of the patient specific record.
+    /// @param _name Name for the patient
+    function isimEkleme(uint256 _kayıtID, string _isim)
+        public
+        hastaVar(msg.gönderen)
+        sadeceHasta(_kayıtID)
+        kayıtVar(_kayıtID, msg.gönderen)
+        boşDeğil(_isim)
+        hastaİsmiGeçersiz(_kayıtID, msg.gönderen)
+    {
+        kayıtlar[_kayıtID][msg.gönderen].geçerliİsim = true;
+        kayıtlar[_kayıtID][msg.gönderen].isim = _name;
+        address kayıtlardakiHastane = kayıtlar[_kayıtID][msg.gönderen].hastane;
+        mappingByİsim[kayıtlardakiHastane][_isim] += 1;
+
+        payPatient(msg.gönderen);
+
+        emit NameAddedToRecords(_recordID, msg.gönderen);
+    }
+
+    /// @dev Allows a Hospital to retrieve the record for a patient.
+    /// @param _recordID ID of the patient specific record.
+    /// @param _patientAddress address of the patient for record.
+    function kayıtAlma(uint _kayıtID, address _hastaAddress)
+        public
+        kayıtVar(_kayıtID, _hastaAddress)
+        HastaKayıdıEklendi(_kayıtID, _hastaAddress)
+        sadeceHastane(_kayıtID, _hastaAddress)
+        view
+        returns (
+            string _isim,
+            address _hastane,
+            uint256 _kabulTarihi,
+            uint256 _taburcuTarihi,
+            uint256 _ziyaretNedeni
+        )
+    {
+        _isim = kayıtlar[_kayıtID][_hastaAddress].isim;
+        _hastane = kayıtlar[_kayıtID][_hastaAddress].hastane;
+        _kabulTarihi = kayıtlar[_kayıtID][_hastaAddress].kabulTarihi;
+        _taburcuTarihi = kayıtlar[_kayıtID][_hastaAddress].taburcuTarihi;
+        _visitReason = kayıtlar[_kayıtID][_hastaAddress].ziyaretNedeni;
+    }
+
+    /// @dev Allows a Hospital to view the number of records for a patient.
+    /// @param _name Name for the patient
+    function ismeGöreKayıtAl(string _isim)
+        public
+        hastaneVar(msg.gönderen)
+        view
+        returns (uint256 kayıtSayısı)
+    {
+        if (mappingByİsim[msg.gönderen][_isim] != 0) {
+            kayıtSayısı = mappingByİsim[msg.gönderen][_isim];
+            return kayıtSayısı;
+        }
+        else
+            return 0;
+    }
+
+    /// @dev Allows a Hospital to view the number of patients on a given date range.
+    /// @param from Starting date
+    /// @param to Ending date
+    function mevcutHastalarıAl(uint from, uint to)
+        public
+        hastaneVar(msg.gönderen)
+        view
+        returns (uint _hastaSayısı)
+    {
+        uint i;
+        _hastaSayısı = 0;
+        for(i = 0; i < kayıtSayısı; i++) {
+            if(tarihAralıkları[i].kabulTarihi >= from && tarihAralıkları[i].taburcuTarihi <= to)
+            _hastaSayısı += 1;
+        }
+    }
+
+
+}
